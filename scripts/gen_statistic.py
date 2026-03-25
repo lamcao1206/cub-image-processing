@@ -1,4 +1,3 @@
-import argparse
 import csv
 import logging
 import time
@@ -7,6 +6,26 @@ from typing import Dict, List, Optional
 
 import numpy as np
 from PIL import Image
+
+# ── Project root is two levels up from this script (scripts/core_eda/) ──
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+
+# ── Hardcoded paths relative to the project root ──
+DATA_DIR = PROJECT_ROOT / "data" / "CUB_200_2011"
+IMAGES_FILE = DATA_DIR / "images.txt"
+CLASSES_FILE = DATA_DIR / "classes.txt"
+IMAGE_CLASS_LABELS_FILE = DATA_DIR / "image_class_labels.txt"
+TRAIN_VAL_TEST_SPLIT_FILE = DATA_DIR / "train_val_test_split.txt"
+
+# ── Output goes into the csv/ folder at the project root ──
+CSV_DIR = PROJECT_ROOT / "csv"
+OUTPUT_FILE = CSV_DIR / "image_statistic.csv"
+SMALL_MAX_AREA = 100_000
+MEDIUM_MAX_AREA = 500_000
+LOG_EVERY = 200
+
+LOGGER = logging.getLogger("data_preprocessing")
 
 
 def load_kv_pairs(path: Path) -> Dict[int, str]:
@@ -86,16 +105,13 @@ def image_stats(image_path: Path) -> Dict[str, float]:
 
 
 def build_row(
-    data_dir: Path,
     image_id: int,
     rel_path: str,
     class_names: Dict[int, str],
     class_by_image: Dict[int, int],
-    split_by_image: Dict[int, int],
-    small_max: int,
-    medium_max: int,
+    split_by_image: Dict[int, str],
 ) -> Optional[Dict[str, object]]:
-    image_path = data_dir / "images" / rel_path
+    image_path = DATA_DIR / "images" / rel_path
 
     if not image_path.exists():
         return None
@@ -109,7 +125,7 @@ def build_row(
     area = width * height
     class_id = class_by_image[image_id]
     breed = class_names[class_id]
-    split = "train" if split_by_image.get(image_id, 0) == 1 else "test"
+    split = split_by_image.get(image_id, "unknown")
 
     stats = image_stats(image_path)
 
@@ -124,69 +140,25 @@ def build_row(
         "file_size_by": file_size_by,
         "file_size_kb": file_size_kb,
         **stats,
-        "size_category": area_bucket(area, small_max, medium_max),
+        "size_category": area_bucket(area, SMALL_MAX_AREA, MEDIUM_MAX_AREA),
         "orientation": orientation(width, height),
     }
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Generate per-image statistics CSV from CUB metadata and image files."
-    )
-    parser.add_argument(
-        "--data-dir",
-        type=Path,
-        default=Path("data"),
-        help="Path to CUB data directory (default: data)",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("data") / "image_statistics.csv",
-        help="Output CSV path (default: data/image_statistics.csv)",
-    )
-    parser.add_argument(
-        "--small-max-area",
-        type=int,
-        default=100_000,
-        help="Max pixel area for 'small' images (default: 100000)",
-    )
-    parser.add_argument(
-        "--medium-max-area",
-        type=int,
-        default=500_000,
-        help="Max pixel area for 'medium' images (default: 500000)",
-    )
-    parser.add_argument(
-        "--limit",
-        type=int,
-        default=0,
-        help="Only process first N images for quick tests (default: 0 = all)",
-    )
-    parser.add_argument(
-        "--log-every",
-        type=int,
-        default=200,
-        help="Log progress every N processed images (default: 200)",
-    )
-    return parser.parse_args()
-
-
-def main() -> None:
-    args = parse_args()
-    data_dir = args.data_dir
-
+def main():
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(message)s",
     )
 
-    images_map = load_kv_pairs(data_dir / "images.txt")
-    class_names = load_kv_pairs(data_dir / "classes.txt")
-    class_by_image = load_int_pairs(data_dir / "image_class_labels.txt")
-    split_by_image = load_int_pairs(data_dir / "train_test_split.txt")
+    LOGGER.info("Data directory : %s", DATA_DIR)
+    LOGGER.info("Output file    : %s", OUTPUT_FILE)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    images_map = load_kv_pairs(IMAGES_FILE)
+    class_names = load_kv_pairs(CLASSES_FILE)
+    class_by_image = load_int_pairs(IMAGE_CLASS_LABELS_FILE)
+    split_by_image = load_kv_pairs(TRAIN_VAL_TEST_SPLIT_FILE)
+    CSV_DIR.mkdir(parents=True, exist_ok=True)
 
     fieldnames = [
         "image_id",
@@ -212,60 +184,53 @@ def main() -> None:
     ]
 
     image_ids: List[int] = sorted(images_map.keys())
-    if args.limit > 0:
-        image_ids = image_ids[: args.limit]
 
     total = len(image_ids)
-    processed = 0
-    written = 0
-    skipped_missing = 0
+    written_rows: List[int] = []
+    skipped_ids: List[int] = []
     started_at = time.time()
 
-    logging.info("Starting CSV generation for %d images", total)
+    LOGGER.info("Starting CSV generation for %d images", total)
 
-    with args.output.open("w", newline="", encoding="utf-8") as f:
+    with OUTPUT_FILE.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for image_id in image_ids:
+        for processed, image_id in enumerate(image_ids, start=1):
             rel_path = images_map[image_id]
             row = build_row(
-                data_dir=data_dir,
                 image_id=image_id,
                 rel_path=rel_path,
                 class_names=class_names,
                 class_by_image=class_by_image,
                 split_by_image=split_by_image,
-                small_max=args.small_max_area,
-                medium_max=args.medium_max_area,
             )
-            processed += 1
 
             if row is None:
-                skipped_missing += 1
+                skipped_ids.append(image_id)
             else:
                 writer.writerow(row)
-                written += 1
+                written_rows.append(image_id)
 
-            if args.log_every > 0 and (processed % args.log_every == 0 or processed == total):
+            if LOG_EVERY > 0 and (processed % LOG_EVERY == 0 or processed == total):
                 elapsed = max(time.time() - started_at, 1e-9)
                 rate = processed / elapsed
-                logging.info(
+                LOGGER.info(
                     "Progress: %d/%d (%.2f%%) | written=%d | skipped_missing=%d | %.2f img/s",
                     processed,
                     total,
                     (processed / total * 100.0) if total else 100.0,
-                    written,
-                    skipped_missing,
+                    len(written_rows),
+                    len(skipped_ids),
                     rate,
                 )
 
     elapsed_total = time.time() - started_at
-    logging.info(
+    LOGGER.info(
         "Finished. output=%s | total=%d | written=%d | skipped_missing=%d | elapsed=%.2fs",
-        args.output,
+        OUTPUT_FILE,
         total,
-        written,
-        skipped_missing,
+        len(written_rows),
+        len(skipped_ids),
         elapsed_total,
     )
 

@@ -2,3 +2,6 @@ data
 .env
 .vscode/
 __pycache__/
+venv/
+.agents/
+archive.zip
