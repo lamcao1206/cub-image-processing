@@ -1,0 +1,4 @@
+Model,Accuracy,Top-5 Accuracy,Precision,Recall,F1-score,Training Time (s),Inference Time (ms/image),Parameters,Model Size (MB)
+Logistic Regression,0.6628,0.8992,0.6731,0.6669,0.6657,11.7,0.007,"409,800",3.1
+Random Forest,0.5970,0.8637,0.5976,0.5998,0.5837,77.5,0.175,"1,858,458",2950.1
+KNN (k=5),0.5009,0.7579,0.5301,0.5046,0.4963,0.0,0.093,N/A,37.5

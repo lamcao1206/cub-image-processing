@@ -1,0 +1,4 @@
+Model,Precision,Recall,F1-Score,Accuracy,Top-5 Accuracy
+Logistic Regression,0.6731,0.6669,0.6657,0.6628,0.8992
+Random Forest,0.5976,0.5998,0.5837,0.5970,0.8637
+KNN (k=5),0.5301,0.5046,0.4963,0.5009,0.7579
